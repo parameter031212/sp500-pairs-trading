@@ -1,0 +1,6 @@
+base = "demo.toml"
+# 실제 분석의 최종 시험기간에서는 튜닝을 실행할 수 없습니다.
+# 평가 구간 미정(all)이면 모든 결과에 exploratory_not_holdout으로 표시합니다.
+[grid]
+"strategy.entry_z" = [1.5, 2.0]
+"strategy.stop_z" = [3.5, 4.5]

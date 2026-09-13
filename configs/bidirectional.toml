@@ -1,0 +1,9 @@
+extends = "baseline.toml"
+
+[formation]
+orientation = "best_of_two"
+# 각 방향의 올바른 EG p값 중 작은 값의 2배(최대 1)를 페어 p값으로 사용.
+# 한 방향에서 적합 오류가 나도 두 번의 탐색 기회를 유지해 보정.
+
+[run]
+output_directory = "results/bidirectional"

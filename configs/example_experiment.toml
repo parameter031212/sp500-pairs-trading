@@ -1,0 +1,12 @@
+extends = "baseline.toml"
+
+[strategy]
+entry_z = 2.5
+exit_z = 0.5
+stop_z = 4.0
+max_holding_days = 90
+# 손절을 끄려면 stop_enabled = false
+# 손절 후 평균 근처로 돌아온 뒤 다시 진입시키려면 reentry_after_stop = "after_reset"
+
+[run]
+output_directory = "results/my_experiment"
