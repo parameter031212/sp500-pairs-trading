@@ -20,38 +20,69 @@ S&P500 과거 구성종목에서 같은 섹터의 페어를 찾고, 로그가격
 
 ## 빠른 시작
 
-Python 3.11 이상을 사용합니다. 이 저장소 폴더를 열고 다음을 실행하세요.
+Python 3.11 이상을 사용합니다. `run_backtest.py`가 있는 프로젝트 루트에서 실행하세요.
+먼저 아래 **데이터 준비**에 따라 세 CSV를 `data/`에 넣습니다. 데이터는 Git에 포함되지 않으므로 저장소를 받는 것만으로 준비되지 않습니다.
 
 ```bash
 python -m pip install -r requirements.txt
-python run_backtest.py run --config configs/demo.toml
+python run_backtest.py check-data
 ```
 
-이 명령은 **가상의 가격으로 전체 실행 과정을 확인**합니다. S&P500 투자 성과가 아닙니다.
-결과는 `results/demo/실행시각_식별자/`에 저장됩니다.
+입력 검사가 성공하면 다음을 실행합니다.
+
+```bash
+python run_backtest.py
+```
+
+기본 명령은 `python run_backtest.py run --config configs/baseline.toml`과 같습니다.
+현재 `Start_Here.ipynb`에 저장된 실제 데이터·파라미터 설정과 동일하게, 2016~2024년의 18개 거래 구간을 실행합니다.
+결과는 `results/실행시각_식별자/`에 저장됩니다.
+
+먼저 한 구간만 확인하려면 다음을 사용합니다.
+
+```bash
+python run_backtest.py run --max-windows 1
+```
+
+`--max-windows 1`은 실행 점검용이며 전체 기간의 성과 검증이 아닙니다. 전체 실행에서는 이 옵션을 빼거나 `--max-windows 0`을 지정하세요.
 
 노트북을 사용하려면 Jupyter 환경에서 `notebooks/Start_Here.ipynb`를 엽니다.
 필요하면 `python -m pip install -e ".[notebook]"`으로 노트북 환경까지 설치할 수 있습니다.
 노트북도 동일한 공통 코드를 호출하며, 별도의 매매 구현을 포함하지 않습니다.
+터미널은 노트북 파일을 직접 읽지 않습니다. 이후 노트북의 `PARAMETERS`를 바꾸면 터미널에도 설정 파일 또는 `--set`으로 같은 값을 지정해야 합니다.
 
-## 실제 데이터로 실행
+## 데이터 준비
 
-다음 세 파일을 `data/`에 두거나 데이터 폴더를 지정합니다.
+별도로 공유된 다음 세 파일을 프로젝트의 `data/` 폴더에 넣으세요.
 
 ```text
-SP500_adjusted_close_cleaned_2005-09-27_2025-12-31.csv
-S&P 500 Historical Components & Changes (Updated).csv
+SP500_prices_2005-09-27_2025-12-31_excluding_MTL_CBH.csv
+SP_500_Historical_Components__Changes_(Updated).csv
 SP500_sector_mapping.csv
 ```
 
+`--data-dir`를 생략하면 `SP500_DATA_DIR` 환경변수, 설정 파일의 `data.directory` 순서로 데이터 위치를 결정합니다. 환경변수를 설정하지 않았다면 기본값은 프로젝트의 `data/`입니다. 해당 폴더를 명시하려면 다음을 사용합니다.
+
 ```bash
-python run_backtest.py check-data --config configs/baseline.toml --data-dir "/path/to/data"
-python run_backtest.py run --config configs/baseline.toml --data-dir "/path/to/data" --max-windows 1
+python run_backtest.py check-data --data-dir "./data"
+python run_backtest.py run --data-dir "./data"
 ```
 
-전체 18개 구간을 실행하려면 `--max-windows 1`을 빼세요. 한 구간의 모든 후보 페어를 검정하므로 실제 데이터는 데모보다 오래 걸립니다.
+다른 폴더를 사용하려면 `./data`를 실제 데이터 폴더 경로로 바꾸세요. `/path/to/data`는 예시 문자열이므로 그대로 입력하지 않습니다.
 파일명이 다르면 `configs/local.toml`에 `extends = "baseline.toml"`과 `[data]`의 파일명을 적으면 됩니다.
+이 경우 실행할 때 `--config configs/local.toml`도 지정하세요.
 원본 가격·구성종목·섹터 파일은 수정하지 않습니다. 데이터 파일, 개인 경로 설정, 실행 결과는 Git에서 제외됩니다.
+
+## 가상 데이터로 동작 확인
+
+실제 CSV를 준비하기 전에도 다음 명령으로 실행 과정을 확인할 수 있습니다.
+
+```bash
+python run_backtest.py run --config configs/demo.toml
+```
+
+이 명령은 **가상의 가격을 사용하는 데모**이며 S&P500 투자 성과가 아닙니다.
+결과는 `results/demo/실행시각_식별자/`에 저장됩니다.
 
 ## 파라미터 바꾸기
 
@@ -76,7 +107,7 @@ output_directory = "results/my_experiment"
 ```
 
 ```bash
-python run_backtest.py run --config configs/example_experiment.toml --data-dir "/path/to/data"
+python run_backtest.py run --config configs/example_experiment.toml --data-dir "./data"
 ```
 
 **손절은 3.5로 고정되지 않습니다.** `stop_z`를 바꾸거나 `stop_enabled = false`로 끌 수 있습니다.

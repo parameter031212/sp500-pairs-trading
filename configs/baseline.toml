@@ -3,8 +3,8 @@
 mode = "csv"
 # 저장소 루트 기준 상대 경로. --data-dir 또는 SP500_DATA_DIR로 덮어쓸 수 있습니다.
 directory = "data"
-prices_file = "SP500_adjusted_close_cleaned_2005-09-27_2025-12-31.csv"
-membership_file = "S&P 500 Historical Components & Changes (Updated).csv"
+prices_file = "SP500_prices_2005-09-27_2025-12-31_excluding_MTL_CBH.csv"
+membership_file = "SP_500_Historical_Components__Changes_(Updated).csv"
 sectors_file = "SP500_sector_mapping.csv"
 min_formation_coverage = 0.99
 min_formation_observations = 120
