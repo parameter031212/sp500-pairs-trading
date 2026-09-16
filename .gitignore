@@ -11,3 +11,6 @@ data/*.parquet
 results/
 configs/local*.toml
 *.log
+AGENTS.md
+agents.md
+/docs/guides/
