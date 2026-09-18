@@ -47,6 +47,16 @@ class Config:
     def with_updates(self, updates: dict) -> "Config":
         values = deepcopy(self.values)
         for dotted_key, value in updates.items():
+            if dotted_key == "start_date":
+                text = str(value)
+                date_format = "%Y%m%d" if len(text) == 8 and text.isdigit() else "%Y-%m-%d"
+                if isinstance(value, bool) or not isinstance(value, (str, int)):
+                    raise ConfigError("start_date는 YYYYMMDD 정수 또는 YYYY-MM-DD 문자열이어야 합니다")
+                try:
+                    value = pd.to_datetime(text, format=date_format, errors="raise").strftime("%Y-%m-%d")
+                except (ValueError, TypeError) as exc:
+                    raise ConfigError("start_date는 유효한 YYYYMMDD 또는 YYYY-MM-DD 날짜여야 합니다") from exc
+                dotted_key = "schedule.start"
             parts = dotted_key.split(".")
             target = values
             for key in parts[:-1]:

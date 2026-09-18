@@ -13,8 +13,8 @@ unknown_sectors = ["", "Unknown", "Other", "Unclassified", "미분류"]
 excluded_tickers = []
 
 [schedule]
-start = "2016-01-01"
-end = "2024-12-31"
+start = "2007-01-01"
+end = "2025-12-31"
 formation_months = 12
 trading_months = 6
 # 재선정 주기는 trading_months와 같음: 거래 구간은 항상 비중첩.
@@ -80,4 +80,4 @@ risk_free_annual_rate = 0.0
 [run]
 seed = 20260911
 output_directory = "results"
-max_windows = 0 # 0: 전체. 1 이상: 실행 점검용 일부 구간; 결과에 제한 실행 표시.
+max_windows = 0 # 0: 시작일부터 end까지 전체. 양수: 시작일부터 최대 이 개수의 거래 구간.

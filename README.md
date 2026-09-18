@@ -35,7 +35,7 @@ python run_backtest.py
 ```
 
 기본 명령은 `python run_backtest.py run --config configs/baseline.toml`과 같습니다.
-현재 `Start_Here.ipynb`에 저장된 실제 데이터·파라미터 설정과 동일하게, 2016~2024년의 18개 거래 구간을 실행합니다.
+현재 `Start_Here.ipynb`에 저장된 실제 데이터·파라미터 설정과 동일하게, 2007~2025년의 38개 거래 구간을 실행합니다.
 결과는 `results/실행시각_식별자/`에 저장됩니다.
 
 먼저 한 구간만 확인하려면 다음을 사용합니다.
@@ -44,7 +44,13 @@ python run_backtest.py
 python run_backtest.py run --max-windows 1
 ```
 
-`--max-windows 1`은 실행 점검용이며 전체 기간의 성과 검증이 아닙니다. 전체 실행에서는 이 옵션을 빼거나 `--max-windows 0`을 지정하세요.
+`start_date`는 거래 시작일, `run.max_windows`는 최대 거래 구간 수입니다. `0`이면 시작일부터 2025년 말까지 실행합니다. 마지막 구간은 2025-12-31까지만 포함하며, 실제 체결일은 데이터의 거래일을 따릅니다.
+
+예를 들어 거래 구간이 기본 6개월일 때 아래 명령은 2008-01-01~2009-12-31의 4개 구간을 실행합니다.
+
+```bash
+python run_backtest.py run --set start_date=20080101 --max-windows 4
+```
 
 노트북을 사용하려면 Jupyter 환경에서 `notebooks/Start_Here.ipynb`를 엽니다.
 필요하면 `python -m pip install -e ".[notebook]"`으로 노트북 환경까지 설치할 수 있습니다.
@@ -117,6 +123,7 @@ python run_backtest.py run --config configs/example_experiment.toml --data-dir "
 | 조정할 항목 | 설정 |
 |---|---|
 | 추정·거래기간 | `schedule.formation_months`, `schedule.trading_months` |
+| 거래 시작일·구간 수 | `start_date`(예: `20080101`), `run.max_windows`(0: 종료일까지 전체) |
 | 진입·청산 기준 | `strategy.entry_z`, `strategy.exit_z` |
 | 손절 사용·기준 | `strategy.stop_enabled`, `strategy.stop_z` |
 | 보유기간 제한 | `strategy.max_holding_enabled`, `strategy.max_holding_days` |
