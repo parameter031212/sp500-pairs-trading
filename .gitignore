@@ -10,4 +10,6 @@ data/*.csv
 data/*.parquet
 results/
 configs/local*.toml
+configs/my_experiment.toml
+reports/
 *.log

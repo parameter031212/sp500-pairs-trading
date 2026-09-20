@@ -12,6 +12,10 @@ min_formation_observations = 120
 unknown_sectors = ["", "Unknown", "Other", "Unclassified", "미분류"]
 excluded_tickers = []
 
+[corporate_actions]
+enabled = false
+events_file = "reference_data/merger_events.csv"
+
 [schedule]
 start = "2016-01-01"
 end = "2024-12-31"
@@ -39,8 +43,20 @@ multiple_testing = "none"
 
 [selection]
 max_pairs = 20
-max_per_sector = 4
-max_per_stock = 2
+max_per_sector = 0 # 0: 섹터당 페어 수 제한 없음
+max_per_stock = 0 # 0: 종목당 페어 수 제한 없음
+
+[pretrade]
+# C/D의 선정 보조 필터. 현재 거래 구간 이전의 순차 모의거래만 사용.
+enabled = false
+months = 12
+block_months = 6
+min_entries = 3
+min_sharpe = 0.0
+# 선정용 규칙은 실험의 청산/손절 값과 별개로 고정.
+entry_z = 2.0
+exit_z = 0.0
+stop_z = 3.5
 
 [strategy]
 entry_z = 2.0

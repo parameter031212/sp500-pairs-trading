@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 from itertools import combinations
 import inspect
+import json
 import warnings
 
 import numpy as np
@@ -12,6 +13,7 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.tsa.stattools import adfuller, coint
 
 from .config import Config
+from .corporate_actions import calendar_for
 from .data import MarketData, normalize_ticker
 from .schedule import Window
 
@@ -82,8 +84,11 @@ def fit_direction(logs: pd.DataFrame, x: str, y: str, cfg: Config) -> dict:
     return result
 
 
-def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
+def _candidate_features(data: MarketData, window: Window, cfg: Config, progress=None):
     f, d, selection = cfg["formation"], cfg["data"], cfg["selection"]
+    mergers = calendar_for(data, cfg)
+    known_mergers = mergers.active(window.formation_dates[-1])
+    blocked_tickers = {e.ticker for e in known_mergers}
     prices = data.prices.loc[window.formation_dates]
     universe, info = data.universe(window.formation_dates[-1])
     unknown = {s.casefold() for s in d["unknown_sectors"]}
@@ -92,9 +97,13 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
     i1_map = {}
     for item in universe.itertuples():
         record = {"window": window.id, "ticker": item.ticker, "sector": item.sector,
-                  "coverage": 0.0, "exclusion": "", "level_adf_p": np.nan, "difference_adf_p": np.nan, "i1_pass": False}
+                  "coverage": 0.0, "exclusion": "", "level_adf_p": np.nan, "difference_adf_p": np.nan,
+                  "i1_pass": False, "merger_event_ids": ""}
         if item.ticker in excluded:
             record["exclusion"] = "explicit_exclusion"
+        elif item.ticker in blocked_tickers:
+            record["exclusion"] = "merger_announced"
+            record["merger_event_ids"] = ";".join(e.event_id for e in known_mergers if e.ticker == item.ticker)
         elif item.ticker not in prices:
             record["exclusion"] = "no_price_column"
         elif item.sector.casefold() in unknown:
@@ -140,16 +149,39 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
             progress(f"{window.id}: {index+1:,}/{len(candidates):,} 후보 검정")
     tested = pd.DataFrame(rows)
     if tested.empty:
-        return [], tested, pd.DataFrame(stock_rows), pd.DataFrame(directions), {**info, "tested_pairs": 0, "selected_pairs": 0}
+        return tested, pd.DataFrame(stock_rows), pd.DataFrame(directions), {**info, "eligible_stocks": len(usable), "tested_pairs": 0}
     pvalues = tested["pair_pvalue"].to_numpy()
     # Every within-sector candidate enters this family, before correlation/HR/half-life filtering.
     tested["decision_pvalue"] = pvalues if f["multiple_testing"] == "none" else multipletests(pvalues, method=f["multiple_testing"])[1]
+    return tested, pd.DataFrame(stock_rows), pd.DataFrame(directions), {
+        **info, "eligible_stocks": len(usable), "tested_pairs": len(tested),
+    }
+
+
+def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None, feature_cache=None):
+    f, d, selection = cfg["formation"], cfg["data"], cfg["selection"]
+    prices = data.prices.loc[window.formation_dates]
+    # Correlation gates differ between A/B/C/D; the underlying tests do not.
+    raw_settings = {k: v for k, v in f.items() if k not in {"correlation_filter", "min_return_correlation"}}
+    identity = getattr(feature_cache, "data_identity", id(data))
+    key = "features:" + json.dumps({"data": identity, "start": str(window.formation_dates[0]),
+        "end": str(window.formation_dates[-1]), "window": window.id, "settings": raw_settings,
+        "data_settings": d, "mergers": calendar_for(data, cfg).fingerprint}, sort_keys=True)
+    if feature_cache is not None and key in feature_cache:
+        tested, stock_audit, directions, info = feature_cache[key]
+    else:
+        tested, stock_audit, directions, info = _candidate_features(data, window, cfg, progress)
+        if feature_cache is not None:
+            feature_cache[key] = (tested, stock_audit, directions, info)
+    tested = tested.copy(deep=True)
+    if tested.empty:
+        return [], tested, stock_audit, directions, {**info, "selected_pairs": 0, "empty_slots": selection["max_pairs"]}
     for i, row in tested.iterrows():
         reasons = []
         if row["error"]:
             reasons.append("fit_error")
         else:
-            if row["n_observations"] < d["min_formation_observations"] or row["n_observations"] / len(logs) < d["min_formation_coverage"]:
+            if row["n_observations"] < d["min_formation_observations"] or row["n_observations"] / len(prices) < d["min_formation_coverage"]:
                 reasons.append("pair_coverage")
             if row["decision_pvalue"] >= f["cointegration_alpha"]:
                 reasons.append("cointegration")
@@ -164,16 +196,36 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
             if not np.isfinite(prices[row["x"]].iloc[-1]) or not np.isfinite(prices[row["y"]].iloc[-1]):
                 reasons.append("missing_formation_end_price")
         tested.at[i, "exclusion"] = ";".join(reasons)
+    if cfg["pretrade"]["enabled"]:
+        # Local import avoids the engine -> Pair circular dependency.
+        from .pretrade import historical_score
+        candidates = tested.index[tested["exclusion"] == ""]
+        for number, i in enumerate(candidates, 1):
+            score = historical_score(data, window, tested.loc[i], cfg, feature_cache)
+            for field, value in score.items():
+                if field not in tested:
+                    tested[field] = "" if isinstance(value, str) else np.nan
+                tested.at[i, field] = value
+            reasons = []
+            if score["pretrade_error"]:
+                reasons.append("pretrade_unavailable")
+            if score["pretrade_entries"] < cfg["pretrade"]["min_entries"]:
+                reasons.append("pretrade_entries")
+            if not np.isfinite(score["pretrade_sharpe"]) or score["pretrade_sharpe"] <= cfg["pretrade"]["min_sharpe"]:
+                reasons.append("pretrade_sharpe")
+            tested.at[i, "exclusion"] = ";".join(reasons)
+            if progress and number % 50 == 0:
+                progress(f"{window.id}: 사전 모의거래 {number:,}/{len(candidates):,} 후보")
     eligible = tested.loc[tested["exclusion"] == ""].sort_values(["tstat", "pair_id", "x"], kind="stable")
     stock_count, sector_count, pairs = Counter(), Counter(), []
     for i, row in eligible.iterrows():
         if len(pairs) >= selection["max_pairs"]:
             tested.at[i, "exclusion"] = "portfolio_full"
             continue
-        if sector_count[row["sector"]] >= selection["max_per_sector"]:
+        if selection["max_per_sector"] > 0 and sector_count[row["sector"]] >= selection["max_per_sector"]:
             tested.at[i, "exclusion"] = "sector_cap"
             continue
-        if max(stock_count[row["x"]], stock_count[row["y"]]) >= selection["max_per_stock"]:
+        if selection["max_per_stock"] > 0 and max(stock_count[row["x"]], stock_count[row["y"]]) >= selection["max_per_stock"]:
             tested.at[i, "exclusion"] = "stock_cap"
             continue
         px, py = float(prices[row["x"]].iloc[-1]), float(prices[row["y"]].iloc[-1])
@@ -182,7 +234,7 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
         stock_count.update([row["x"], row["y"]]); sector_count.update([row["sector"]])
         tested.at[i, "selected"] = True
         tested.at[i, "selection_rank"] = len(pairs)
-    return pairs, tested, pd.DataFrame(stock_rows), pd.DataFrame(directions), {
-        **info, "eligible_stocks": len(usable), "tested_pairs": len(tested),
+    return pairs, tested, stock_audit, directions, {
+        **info,
         "selected_pairs": len(pairs), "empty_slots": selection["max_pairs"] - len(pairs),
     }

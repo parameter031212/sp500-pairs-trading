@@ -1,0 +1,37 @@
+extends = "baseline.toml"
+
+# 144개: A→B→C→D, 각 모델 안에서 F12→F24,
+# 청산 0→+0.5, 손절 3→3.5→…→7.
+# 차트와 페어별 일별 원장은 기본 compact 출력에서 생략합니다.
+# 후보 검정 감사표는 모델/추정개월별로 한 번 저장합니다.
+[corporate_actions]
+enabled = true
+events_file = "reference_data/merger_events.csv"
+
+[schedule]
+start = "2020-01-01"
+end = "2025-12-31"
+
+[formation]
+min_return_correlation = 0.5 # B/D: 로그 수익률 상관계수 > 0.5
+
+[pretrade]
+months = 12
+block_months = 6
+min_entries = 3
+min_sharpe = 0.0 # C/D: 비용 차감 일별 수익률의 연율화 샤프 > 0
+# 선정용 사전 모의거래의 고정 규칙.
+entry_z = 2.0
+exit_z = 0.0
+stop_z = 3.5
+
+[strategy]
+entry_z = 2.0
+max_holding_enabled = true
+max_holding_days = 60
+reentry_after_stop = "block_window"
+reentry_after_time_exit = "block_window"
+
+[run]
+output_directory = "results"
+max_windows = 0

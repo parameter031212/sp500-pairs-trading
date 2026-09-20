@@ -1,17 +1,22 @@
 # S&P500 팀 공통 페어트레이딩 베이스라인
 
 같은 매매·손익 계산 코드를 사용하면서, 팀원별로 설정 파일을 바꿔 실험하는 연구용 모델입니다.
-S&P500 과거 구성종목에서 같은 섹터의 페어를 찾고, 로그가격 Engle–Granger 검정과 고정된 스프레드로 거래합니다.
+S&P500 과거 구성종목에서 같은 섹터의 페어를 찾고, 로그가격 Engle-Granger 검정과 고정된 스프레드로 거래합니다.
 
 **먼저 볼 파일**
 
 | 목적 | 파일 |
 |---|---|
+| B모델 실행 설정 | [configs/model_b.toml](configs/model_b.toml) |
+| B모델 방법·조건·실행 안내 | [docs/model_b.md](docs/model_b.md) |
 | 노트북에서 실행 | [notebooks/Start_Here.ipynb](notebooks/Start_Here.ipynb) |
 | 팀 공통 기본값 | [configs/baseline.toml](configs/baseline.toml) |
 | 개인 실험 설정 예시 | [configs/example_experiment.toml](configs/example_experiment.toml) |
 | 양방향 비교 옵션 | [configs/bidirectional.toml](configs/bidirectional.toml) |
 | 여러 조합을 한 번에 비교 | [configs/grid_demo.toml](configs/grid_demo.toml) |
+| A–D 144개 조합 실행·이어하기 | [notebooks/Run_144_Experiments.ipynb](notebooks/Run_144_Experiments.ipynb) |
+| 144개 실험의 선정·청산 규칙 | [docs/selection_study.md](docs/selection_study.md) |
+| 합병 발표 차단·청산과 출처 | [reference_data/README.md](reference_data/README.md) |
 | 정확한 거래·회계 규칙 | [docs/specification.md](docs/specification.md) |
 | 합의사항과 미정 항목 | [docs/decisions.md](docs/decisions.md) |
 | 데이터 형식·한계 | [data/README.md](data/README.md) |
@@ -19,6 +24,10 @@ S&P500 과거 구성종목에서 같은 섹터의 페어를 찾고, 로그가격
 | 배포 전 검증 범위 | [docs/validation.md](docs/validation.md) |
 
 ## 빠른 시작
+
+팀 공유 B모델은 **공적분+일별 로그수익률 상관계수, 진입 2시그마, 청산 Z=0, 손절 3.5시그마**입니다. 실행에는 `configs/model_b.toml`을 사용하세요. [B모델 안내](docs/model_b.md)에 선정 기준과 노트북 실행 방법을 정리했습니다.
+
+섹터당·종목당 페어 수 제한은 기본 해제되어 있습니다. `[selection]`의 `max_per_sector=0`, `max_per_stock=0`은 제한 없음을 뜻하며, 같은 섹터 안에서 후보를 만드는 조건과 전체 최대 20페어는 유지합니다. 양의 정수를 지정하면 해당 제한을 다시 적용할 수 있습니다.
 
 Python 3.11 이상을 사용합니다. 이 저장소 폴더를 열고 다음을 실행하세요.
 
@@ -52,6 +61,10 @@ python run_backtest.py run --config configs/baseline.toml --data-dir "/path/to/d
 전체 18개 구간을 실행하려면 `--max-windows 1`을 빼세요. 한 구간의 모든 후보 페어를 검정하므로 실제 데이터는 데모보다 오래 걸립니다.
 파일명이 다르면 `configs/local.toml`에 `extends = "baseline.toml"`과 `[data]`의 파일명을 적으면 됩니다.
 원본 가격·구성종목·섹터 파일은 수정하지 않습니다. 데이터 파일, 개인 경로 설정, 실행 결과는 Git에서 제외됩니다.
+
+기본 설정과 A–D 실험 모두 확인된 합병 발표 이후 피인수 종목의 신규 진입을 막고, 보유 페어는 다음 거래 가능한 종가에 양쪽을 청산합니다. 일정표에 등재된 사건만 반영하며, 아직 전 종목의 기업행동을 망라한 자료는 아닙니다. 자세한 시점 규칙과 출처는 [합병 일정 설명](reference_data/README.md)에 있습니다.
+
+A–D 재실행은 커널을 재시작한 뒤 **Run_144_Experiments.ipynb**를 사용하세요. 2020–2025년을 기본으로 하며, 집중 제한을 해제한 결과는 새 `results/selection_study_144_no_concentration_caps/`에 저장합니다. 기존 144개·216개 결과는 이전 설정의 실험 기록으로 보관합니다. 설정이나 코드를 바꾼 뒤에는 이전 결과 폴더에서 이어 실행할 수 없습니다.
 
 ## 파라미터 바꾸기
 

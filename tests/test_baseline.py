@@ -217,6 +217,37 @@ class FormationTests(unittest.TestCase):
         self.assertEqual(len(pairs), len({pair.sector for pair in pairs}))
         self.assertTrue(all(p.x < p.y for p in pairs))
 
+    def test_zero_caps_allow_concentration_and_keep_total_pair_limit(self):
+        prices = self.data.prices.iloc[:, :8]
+        sectors = self.data.sectors.loc[self.data.sectors.ticker.isin(prices.columns)].copy()
+        sectors["sector"] = "One sector"
+        data = MarketData(prices, self.data.membership[["date", "tickers"]], sectors)
+        window = make_windows(data.prices.index, config())[0]
+
+        def passing_pair(logs, x, y, cfg):
+            return {"x": x, "y": y, "error": "", "pvalue": .001,
+                    "tstat": -5., "alpha": 0., "beta": 1., "mean": 0., "std": .01,
+                    "phi": .93, "half_life": 10., "return_correlation": .8,
+                    "n_observations": len(logs), "dropped_formation_rows": 0, "warnings": ""}
+
+        for sector_cap, stock_cap, expected_count in [(0, 0, 20), (0, 1, 4), (4, 0, 4)]:
+            with self.subTest(sector_cap=sector_cap, stock_cap=stock_cap):
+                cfg = config(**{"selection.max_per_sector": sector_cap,
+                                "selection.max_per_stock": stock_cap})
+                with patch("sp500_pairs.formation.fit_direction", side_effect=passing_pair):
+                    pairs, tested, _, _, info = select_pairs(data, window, cfg)
+                self.assertEqual(len(pairs), expected_count)
+                self.assertEqual(info["empty_slots"], 20 - expected_count)
+                self.assertTrue(all(pair.sector == "One sector" for pair in pairs))
+                counts = pd.Series([t for pair in pairs for t in (pair.x, pair.y)]).value_counts()
+                if stock_cap:
+                    self.assertLessEqual(counts.max(), stock_cap)
+                else:
+                    self.assertGreater(counts.max(), 2)
+                    self.assertNotIn("stock_cap", tested.exclusion.values)
+                if not sector_cap:
+                    self.assertNotIn("sector_cap", tested.exclusion.values)
+
 
 class PortfolioAndConfigTests(unittest.TestCase):
     def test_toml_inheritance_preserves_defaults(self):
@@ -224,9 +255,13 @@ class PortfolioAndConfigTests(unittest.TestCase):
         self.assertEqual(cfg["strategy"]["stop_z"], 4.)
         self.assertEqual(cfg["strategy"]["reentry_after_stop"], "block_window")
         self.assertEqual(cfg["selection"]["max_pairs"], 20)
+        self.assertEqual(cfg["selection"]["max_per_sector"], 0)
+        self.assertEqual(cfg["selection"]["max_per_stock"], 0)
 
     def test_invalid_parameters_fail_early(self):
         for change in [{"strategy.stop_z": 1.}, {"strategy.exit_z": 2.},
+                       {"selection.max_pairs": 0}, {"selection.max_per_sector": -1},
+                       {"selection.max_per_stock": -1}, {"selection.max_per_stock": 1.5},
                        {"selection.max_pairs": 2.5}, {"schedule.trading_months": 2.0}, {"strategy.stop_enable": False},
                        {"strategy.stop_enabled": "false"}, {"formation.autolag": "wrong"}]:
             with self.subTest(change=change), self.assertRaises(ConfigError):

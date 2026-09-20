@@ -19,6 +19,8 @@ from .config import Config, ConfigError, load_config
 from .data import MarketData, load_data
 from .engine import simulate_pair
 from .formation import select_pairs
+from .corporate_actions import calendar_for
+from .pretrade import reference_config
 from .schedule import make_windows
 
 
@@ -66,6 +68,7 @@ def metrics(daily: pd.DataFrame, trades: pd.DataFrame, cfg: Config) -> dict:
         "max_drawdown": drawdown.min(),
         "calmar": annual_return / abs(drawdown.min()) if drawdown.min() < 0 else np.nan,
         "completed_trades": len(trades),
+        "merger_announcement_exits": int(trades["exit_reason"].eq("merger_announcement").sum()) if len(trades) else 0,
         "win_rate": float((trades["net_pnl"] > 0).mean()) if len(trades) else None,
         "mean_reversion_exit_rate": float(trades["exit_reason"].eq("mean_reversion").mean()) if len(trades) else None,
         "mean_holding_days": float(trades["holding_days"].mean()) if len(trades) else None,
@@ -103,13 +106,16 @@ def save_plot(daily, output: Path, initial: float, data_mode: str = "in_memory")
 def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
                  output_dir: str | Path | None = None, write_outputs: bool = True,
                  progress=print, formation_cache: dict | None = None,
-                 detector_factory=None) -> dict:
+                 detector_factory=None, output_profile="full", selection_audit_dir=None) -> dict:
     """detector_factory(pair, formation_prices) may inspect formation only.
 
     Each detector then receives sequential close observations, including after an exit.
     The trading baseline stays fixed; a detector can request next-close exit and blocking.
     """
+    if output_profile not in {"full", "compact"}:
+        raise ConfigError("output_profile: full/compact")
     data = data if data is not None else load_data(cfg, data_dir)
+    mergers = calendar_for(data, cfg)
     windows = make_windows(data.prices.index, cfg)
     label = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:6]
     if output_dir is not None:
@@ -130,11 +136,17 @@ def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
         "packages": {name: importlib.metadata.version(name) for name in ("numpy", "pandas", "scipy", "statsmodels", "matplotlib")},
         "detector": "none" if detector_factory is None else getattr(detector_factory, "__name__", type(detector_factory).__name__),
         "default_stop_reentry": "block_window; user-adjustable separately from stop_z",
+        "output_profile": output_profile,
+        "selection_audit_directory": str(selection_audit_dir) if selection_audit_dir is not None else None,
+        "merger_policy_enabled": cfg["corporate_actions"]["enabled"],
+        "merger_calendar_sha256": mergers.fingerprint,
+        "merger_calendar_coverage": mergers.coverage,
     }
     if write_outputs:
         destination.mkdir(parents=True, exist_ok=False)
         write_json(destination / "manifest.json", manifest)
         write_json(destination / "effective_config.json", cfg.values)
+        write_json(destination / "merger_events.json", mergers.records())
     tables = {key: [] for key in ("portfolio_daily", "pair_daily", "trades", "tested_pairs", "universe_audit", "direction_tests", "selected_pairs")}
     window_rows = []
     capital = cfg["portfolio"]["initial_capital"]
@@ -143,11 +155,16 @@ def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
         for number, window in enumerate(windows, 1):
             if progress:
                 progress(f"[{number}/{len(windows)}] {window.id}: 포메이션 및 페어 선정")
-            key_text = json.dumps({"data_object": id(data), "window": window.id,
+            key_text = json.dumps({"data_object": getattr(formation_cache, "data_identity", id(data)), "window": window.id,
                 "formation_start": str(window.formation_dates[0]), "formation_end": str(window.formation_dates[-1]),
-                "data_settings": cfg["data"], "formation": cfg["formation"], "selection": cfg["selection"]}, sort_keys=True)
+                "data_settings": cfg["data"], "formation": cfg["formation"], "selection": cfg["selection"],
+                "mergers": mergers.fingerprint,
+                "pretrade": cfg["pretrade"],
+                "pretrade_context": {"strategy": reference_config(cfg)["strategy"],
+                    "costs": cfg["costs"], "evaluation": cfg["evaluation"], "cash_rate": cfg["portfolio"]["cash_annual_rate"]}
+                    if cfg["pretrade"]["enabled"] else None}, sort_keys=True)
             if key_text not in formation_cache:
-                formation_cache[key_text] = select_pairs(data, window, cfg, progress)
+                formation_cache[key_text] = select_pairs(data, window, cfg, progress, feature_cache=formation_cache)
             pairs, tested, stock_audit, directions, info = formation_cache[key_text]
             tables["tested_pairs"].append(tested)
             tables["universe_audit"].append(stock_audit)
@@ -165,7 +182,7 @@ def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
             pair_frames = []
             for pair in pairs:
                 detector = detector_factory(pair, data.prices.loc[window.formation_dates, [pair.x, pair.y]].copy()) if detector_factory else None
-                daily, trades = simulate_pair(pair, data.prices.loc[window.trading_dates, [pair.x, pair.y]], slot, cfg, window.id, detector)
+                daily, trades = simulate_pair(pair, data.prices.loc[window.trading_dates, [pair.x, pair.y]], slot, cfg, window.id, detector, mergers)
                 pair_frames.append(daily); tables["pair_daily"].append(daily); tables["trades"].append(trades)
             columns = ["nav_start", "nav", "gross_pnl", "trading_cost", "borrow_cost", "cash_interest", "turnover", "gross_before", "gross_notional"]
             agg = pd.DataFrame(0.0, index=window.trading_dates, columns=columns)
@@ -191,19 +208,19 @@ def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
         result = {key: _concat(frames) for key, frames in tables.items()}
         # An empty output still has useful headers and can be read with read_csv.
         empty_columns = {
-            "trades": "window pair_id x y sector direction alpha beta entry_signal_date entry_date entry_signal_z entry_fill_z entry_x entry_y quantity_x quantity_y entry_nav entry_gross entry_cost gross_pnl borrow_cost exit_signal_date exit_date exit_signal_z exit_fill_z exit_x exit_y exit_reason exit_cost exit_nav holding_days net_pnl net_return",
-            "pair_daily": "date window pair_id x y sector zscore nav_start nav gross_pnl trading_cost borrow_cost cash_interest turnover net_return position_before position quantity_x quantity_y notional_x notional_y gross_before gross_notional holding_days blocked waiting_reset event detector_signal next_order next_reason",
+            "trades": "window pair_id x y sector direction alpha beta entry_signal_date entry_date entry_signal_z entry_fill_z entry_x entry_y quantity_x quantity_y entry_nav entry_gross entry_cost gross_pnl borrow_cost exit_signal_date exit_date exit_signal_z exit_fill_z exit_x exit_y exit_reason exit_cost exit_nav holding_days net_pnl net_return merger_event_ids",
+            "pair_daily": "date window pair_id x y sector zscore nav_start nav gross_pnl trading_cost borrow_cost cash_interest turnover net_return position_before position quantity_x quantity_y notional_x notional_y gross_before gross_notional holding_days blocked waiting_reset event detector_signal merger_blocked merger_event_ids next_order next_reason",
             "selected_pairs": "window id x y sector alpha beta mean std formation_end last_z last_x last_y",
             "tested_pairs": "window pair_id sector x y error pvalue tstat direction_tests pair_pvalue i1_pass selected exclusion decision_pvalue",
             "direction_tests": "window pair_id x y error pvalue tstat",
-            "universe_audit": "window ticker sector coverage exclusion level_adf_p difference_adf_p i1_pass",
+            "universe_audit": "window ticker sector coverage exclusion level_adf_p difference_adf_p i1_pass merger_event_ids",
         }
         for key, columns in empty_columns.items():
             if len(result[key].columns) == 0:
                 result[key] = pd.DataFrame(columns=columns.split())
         result["windows"] = pd.DataFrame(window_rows)
         p = result["pair_daily"]
-        if not p.empty:
+        if not p.empty and output_profile == "full":
             exposures = []
             for side in ("x", "y"):
                 frame = p[["date", side, "notional_"+side]].rename(columns={side: "ticker", "notional_"+side: "net_notional"}).copy()
@@ -218,10 +235,23 @@ def run_backtest(cfg: Config, data: MarketData | None = None, data_dir=None,
         if write_outputs:
             for key, value in result.items():
                 if isinstance(value, pd.DataFrame):
-                    value.to_csv(destination / (key + ".csv"), index=False)
+                    if output_profile == "compact" and key in {"pair_daily", "stock_exposure"}:
+                        continue
+                    target = destination
+                    if selection_audit_dir is not None and key in {"tested_pairs", "universe_audit", "direction_tests"}:
+                        target = Path(selection_audit_dir)
+                        target.mkdir(parents=True, exist_ok=True)
+                        if (target / (key + ".csv")).exists():
+                            continue
+                        temp = target / (key + ".csv.tmp")
+                        value.to_csv(temp, index=False)
+                        temp.replace(target / (key + ".csv"))
+                    else:
+                        value.to_csv(target / (key + ".csv"), index=False)
             write_json(destination / "summary.json", result["summary"])
             write_json(destination / "manifest.json", manifest)
-            save_plot(result["portfolio_daily"], destination, cfg["portfolio"]["initial_capital"], manifest["data_mode"])
+            if output_profile == "full":
+                save_plot(result["portfolio_daily"], destination, cfg["portfolio"]["initial_capital"], manifest["data_mode"])
         return result
     except Exception as exc:
         if write_outputs:

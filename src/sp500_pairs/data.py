@@ -36,6 +36,7 @@ class MarketData:
     membership: pd.DataFrame
     sectors: pd.DataFrame
     metadata: dict = field(default_factory=dict)
+    mergers: object | None = None
 
     def __post_init__(self):
         self.prices = self.prices.copy()
@@ -88,8 +89,9 @@ class MarketData:
 
 
 def load_data(cfg: Config, data_dir: str | Path | None = None) -> MarketData:
+    from .corporate_actions import prepare_corporate_actions
     if cfg["data"]["mode"] == "synthetic":
-        return synthetic_data(cfg["run"]["seed"])
+        return prepare_corporate_actions(synthetic_data(cfg["run"]["seed"]), cfg)
     d = cfg["data"]
     directory = Path(data_dir or os.environ.get("SP500_DATA_DIR") or d["directory"]).expanduser()
     if not directory.is_absolute():
@@ -130,7 +132,7 @@ def load_data(cfg: Config, data_dir: str | Path | None = None) -> MarketData:
         "sector_labels": sorted(result.sectors["sector"].unique().tolist()),
         "large_one_day_move_count_over_50pct": int((result.prices.pct_change(fill_method=None).abs() > .5).sum().sum()),
     })
-    return result
+    return prepare_corporate_actions(result, cfg)
 
 
 def synthetic_data(seed: int = 20260911) -> MarketData:
