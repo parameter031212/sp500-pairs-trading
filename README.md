@@ -9,16 +9,26 @@ S&P500 과거 구성종목에서 같은 섹터의 페어를 찾고, 로그가격
 |---|---|
 | 노트북에서 실행 | [notebooks/Start_Here.ipynb](notebooks/Start_Here.ipynb) |
 | 팀 공통 기본값 | [configs/baseline.toml](configs/baseline.toml) |
+| B 모델 별도 실행 설정 | [configs/model_b.toml](configs/model_b.toml) |
+| B 모델 선정·거래 규칙 | [docs/model_b.md](docs/model_b.md) |
 | 개인 실험 설정 예시 | [configs/example_experiment.toml](configs/example_experiment.toml) |
 | 양방향 비교 옵션 | [configs/bidirectional.toml](configs/bidirectional.toml) |
 | 여러 조합을 한 번에 비교 | [configs/grid_demo.toml](configs/grid_demo.toml) |
 | 정확한 거래·회계 규칙 | [docs/specification.md](docs/specification.md) |
 | 합의사항과 미정 항목 | [docs/decisions.md](docs/decisions.md) |
 | 데이터 형식·한계 | [data/README.md](data/README.md) |
+| B 모델 합병 발표 규칙 | [reference_data/README.md](reference_data/README.md) |
 | 탐지 전략 연결 방법 | [docs/detector_extension.md](docs/detector_extension.md) |
 | 배포 전 검증 범위 | [docs/validation.md](docs/validation.md) |
 
 ## 빠른 시작
+
+기존 공통 모델은 `configs/baseline.toml`에 유지합니다. B 모델은
+`configs/model_b.toml`을 지정해 별도로 실행합니다. B는 공적분·일별 로그수익률
+상관계수와 기존 거래 규칙을 사용하며, 종목·섹터별 페어 수 제한을 해제하고
+확인된 합병 발표에 대한 거래 규칙을 적용합니다. 다중검정 보정과 정성적 기업
+검수는 적용하지 않습니다. B의 정확한 조건과 자료 한계는
+[B 모델 안내](docs/model_b.md)에 기록했습니다.
 
 Python 3.11 이상을 사용합니다. 이 저장소 폴더를 열고 다음을 실행하세요.
 

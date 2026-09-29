@@ -12,6 +12,10 @@ min_formation_observations = 120
 unknown_sectors = ["", "Unknown", "Other", "Unclassified", "미분류"]
 excluded_tickers = []
 
+[corporate_actions]
+enabled = false
+events_file = "reference_data/merger_events.csv"
+
 [schedule]
 start = "2016-01-01"
 end = "2024-12-31"

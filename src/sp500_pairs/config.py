@@ -95,6 +95,7 @@ def _validate(v: dict) -> None:
         if not condition:
             raise ConfigError(message)
     require(d["mode"] in {"csv", "synthetic"}, "data.mode: csv/synthetic")
+    require(bool(v["corporate_actions"]["events_file"]) or not v["corporate_actions"]["enabled"], "합병 일정 파일 경로 필요")
     require(0 < d["min_formation_coverage"] <= 1, "커버리지는 0 초과 1 이하")
     require(d["min_formation_observations"] >= 20, "최소 포메이션 관측치는 20 이상")
     require(s["formation_months"] >= 1 and s["trading_months"] >= 1, "개월 수는 1 이상")
@@ -106,7 +107,9 @@ def _validate(v: dict) -> None:
     require(-1 <= f["min_return_correlation"] <= 1, "상관계수 기준은 -1~1")
     require(0 < f["beta_min"] <= f["beta_max"], "양의 beta_min <= beta_max 필요")
     require(0 < f["half_life_min"] <= f["half_life_max"], "양의 반감기 범위 필요")
-    require(all(n[key] >= 1 for key in n), "페어 수와 집중 제한은 1 이상")
+    require(n["max_pairs"] >= 1, "최대 페어 수는 1 이상")
+    require(n["max_per_sector"] >= 0 and n["max_per_stock"] >= 0,
+            "집중 제한은 0 이상이며 0은 제한 없음")
     require(t["entry_z"] > 0 and -t["entry_z"] < t["exit_z"] < t["entry_z"], "청산 기준은 -entry_z와 entry_z 사이")
     require(t["stop_z"] > 0 and (not t["stop_enabled"] or t["stop_z"] > t["entry_z"]), "활성 손절 기준은 진입 기준보다 커야 함")
     require(t["max_holding_days"] >= 2, "보유기간은 체결일 포함 2거래일 이상")
@@ -135,7 +138,8 @@ def _validate(v: dict) -> None:
 
 def load_config(path: str | Path = "configs/baseline.toml") -> Config:
     source = Path(path).expanduser().resolve()
-    values = _read(source, set())
+    # New optional fields must also work with previously saved full configurations.
+    values = merge(_read(Path(__file__).with_name("defaults.toml"), set()), _read(source, set()))
     _validate(values)
     root = source.parent.parent if source.parent.name == "configs" else source.parent
     return Config(values, root, source)
