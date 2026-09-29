@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .config import Config
+from .corporate_actions import MergerCalendar, configured_calendar
 from .data import DataError
 from .formation import Pair
 from .monitoring import Detector, NoDetector, Observation
@@ -17,6 +18,7 @@ class Order:
     signal_date: pd.Timestamp
     signal_z: float
     reason: str
+    merger_event_ids: str = ""
 
 
 def entry_direction(z: float, settings: dict) -> int:
@@ -35,7 +37,7 @@ def quantities(capital: float, beta: float, direction: int, px: float, py: float
 
 
 def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
-                  window_id: str, detector: Detector | None = None):
+                  window_id: str, detector: Detector | None = None, merger_calendar=None):
     """Mark existing shares, then fill yesterday's order at this close, then decide.
 
     Missing held prices and insolvency fail explicitly. No stale-price liquidation,
@@ -43,6 +45,8 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
     """
     settings, costs, portfolio = cfg["strategy"], cfg["costs"], cfg["portfolio"]
     detector = detector if detector is not None else NoDetector()
+    mergers = ((merger_calendar if merger_calendar is not None else configured_calendar(cfg))
+               if cfg["corporate_actions"]["enabled"] else MergerCalendar()).for_tickers(pair.x, pair.y)
     if len(prices) < 2:
         raise DataError("페어 거래 구간은 최소 2개 관측치가 필요합니다")
     dates = pd.DatetimeIndex(prices.index)
@@ -54,7 +58,10 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
     previous_x, previous_y, previous_date = pair.last_x, pair.last_y, pair.formation_end
     direction = entry_direction(pair.last_z, settings)
     pending = Order("enter", direction, pair.formation_end, pair.last_z, "entry") if direction else None
-    blocked = waiting_reset = False
+    merger_blocked = bool(mergers.active(pair.formation_end))
+    if merger_blocked:
+        pending = None
+    blocked, waiting_reset = merger_blocked, False
     open_trade = None
     trades, daily = [], []
     fee_rate = (costs["commission_bps"] + costs["slippage_bps"]) / 10000
@@ -64,11 +71,19 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
         old_position = position
         days_elapsed = (date - previous_date).days
         finite = bool(np.isfinite(px) and np.isfinite(py) and px > 0 and py > 0)
+        tradable = mergers.tradable(date)
+        active_mergers = mergers.active(date)
+        merger_ids = ";".join(e.event_id for e in active_mergers)
+        merger_blocked = merger_blocked or bool(active_mergers)
+        if merger_blocked:
+            blocked = True
         z = pair.zscore(px, py)
         gross_pnl = borrow = interest = turnover = trading_cost = 0.0
         event = ""
         detector_signal = False
         if position:
+            if not tradable:
+                raise DataError(f"거래정지 이후 보유 포지션: {window_id} {pair.id} {date.date()}. 기업행동 정산 자료가 필요하며 남아 있는 CSV 가격으로 체결하지 않습니다.")
             if not finite:
                 raise DataError(f"보유 중 가격 결측: {window_id} {pair.id} {date.date()}. 가격을 채우거나 가상 청산하지 않았습니다.")
             gross_before = abs(qx * previous_x) + abs(qy * previous_y)
@@ -88,13 +103,16 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
         final_day = i == len(dates) - 1
         execution = pending
         pending = None
+        if execution and execution.action == "enter" and merger_blocked:
+            execution = None
+            event = "entry_cancelled_merger"
         if final_day:
             if position and (execution is None or execution.action != "exit"):
                 execution = Order("exit", 0, previous_date, np.nan, "window_end")
             elif not position:
                 execution = None
         if execution and execution.action == "enter" and not final_day:
-            if not finite:
+            if not finite or not tradable:
                 event = "entry_cancelled_missing_price"
             elif position == 0 and not blocked:
                 entry_nav = nav
@@ -125,6 +143,7 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
                 "exit_cost": trading_cost, "exit_nav": nav, "holding_days": i - entry_index + 1,
                 "net_pnl": nav - open_trade["entry_nav"],
                 "net_return": nav / open_trade["entry_nav"] - 1,
+                "merger_event_ids": execution.merger_event_ids,
             })
             trades.append(open_trade)
             open_trade = None
@@ -134,7 +153,7 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
                 key = "reentry_after_stop" if event == "stop_z" else "reentry_after_time_exit"
                 blocked = settings[key] == "block_window"
                 waiting_reset = settings[key] == "after_reset"
-            elif event == "detector":
+            elif event in {"detector", "merger_announcement"}:
                 blocked = True
         if nav <= 0 or not np.isfinite(nav):
             raise DataError(f"비용 차감 후 지급불능: {window_id} {pair.id} {date.date()}")
@@ -152,7 +171,9 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
         if not final_day:
             if position:
                 reason = None
-                if (position == 1 and z >= -settings["exit_z"]) or (position == -1 and z <= settings["exit_z"]):
+                if merger_blocked:
+                    reason = "merger_announcement"
+                elif (position == 1 and z >= -settings["exit_z"]) or (position == -1 and z <= settings["exit_z"]):
                     reason = "mean_reversion"
                 elif settings["stop_enabled"] and ((position == 1 and z <= -settings["stop_z"]) or (position == -1 and z >= settings["stop_z"])):
                     reason = "stop_z"
@@ -161,8 +182,9 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
                 elif settings["max_holding_enabled"] and holding_days >= settings["max_holding_days"] - 1:
                     reason = "time_exit"
                 if reason:
-                    pending = Order("exit", 0, date, z, reason)
-            elif not event and finite and not blocked:
+                    pending = Order("exit", 0, date, z, reason,
+                                    merger_ids if reason == "merger_announcement" else "")
+            elif not event and finite and tradable and not blocked:
                 if waiting_reset:
                     if abs(z) < settings["entry_z"]:
                         waiting_reset = False
@@ -183,6 +205,7 @@ def simulate_pair(pair: Pair, prices: pd.DataFrame, capital: float, cfg: Config,
             "gross_before": gross_before, "gross_notional": end_gross,
             "holding_days": holding_days, "blocked": blocked, "waiting_reset": waiting_reset,
             "event": event, "detector_signal": detector_signal,
+            "merger_blocked": merger_blocked, "merger_event_ids": merger_ids,
             "next_order": pending.action if pending else "", "next_reason": pending.reason if pending else "",
         })
         previous_x, previous_y, previous_date = px, py, date

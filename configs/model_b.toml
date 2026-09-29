@@ -1,0 +1,43 @@
+# 팀 공유용 B모델: 공적분 + 일별 로그수익률 상관계수.
+# 실행: python run_backtest.py run --config configs/model_b.toml
+extends = "baseline.toml"
+
+[corporate_actions]
+enabled = true
+
+[schedule]
+# 실행 기간은 baseline.toml의 2016-01-01~2024-12-31을 상속합니다.
+formation_months = 12
+trading_months = 6
+
+[formation]
+orientation = "fixed"
+cointegration_alpha = 0.05
+correlation_filter = true
+min_return_correlation = 0.5
+beta_min = 0.3
+beta_max = 3.0
+half_life_filter = true
+half_life_min = 5.0
+half_life_max = 30.0
+require_i1 = false
+multiple_testing = "none"
+
+[selection]
+max_pairs = 20
+max_per_sector = 0 # 섹터당 페어 수 제한 없음
+max_per_stock = 0 # 종목당 페어 수 제한 없음
+
+[strategy]
+entry_z = 2.0
+exit_z = 0.0
+stop_enabled = true
+stop_z = 3.5
+max_holding_enabled = true
+max_holding_days = 60
+reentry_after_stop = "block_window"
+reentry_after_time_exit = "block_window"
+
+[run]
+output_directory = "results/model_b"
+max_windows = 0

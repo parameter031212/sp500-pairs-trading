@@ -12,6 +12,7 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.tsa.stattools import adfuller, coint
 
 from .config import Config
+from .corporate_actions import calendar_for
 from .data import MarketData, normalize_ticker
 from .schedule import Window
 
@@ -84,6 +85,8 @@ def fit_direction(logs: pd.DataFrame, x: str, y: str, cfg: Config) -> dict:
 
 def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
     f, d, selection = cfg["formation"], cfg["data"], cfg["selection"]
+    known_mergers = calendar_for(data, cfg).active(window.formation_dates[-1])
+    blocked_tickers = {event.ticker for event in known_mergers}
     prices = data.prices.loc[window.formation_dates]
     universe, info = data.universe(window.formation_dates[-1])
     unknown = {s.casefold() for s in d["unknown_sectors"]}
@@ -92,9 +95,14 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
     i1_map = {}
     for item in universe.itertuples():
         record = {"window": window.id, "ticker": item.ticker, "sector": item.sector,
-                  "coverage": 0.0, "exclusion": "", "level_adf_p": np.nan, "difference_adf_p": np.nan, "i1_pass": False}
+                  "coverage": 0.0, "exclusion": "", "level_adf_p": np.nan, "difference_adf_p": np.nan,
+                  "i1_pass": False, "merger_event_ids": ""}
         if item.ticker in excluded:
             record["exclusion"] = "explicit_exclusion"
+        elif item.ticker in blocked_tickers:
+            record["exclusion"] = "merger_announced"
+            record["merger_event_ids"] = ";".join(
+                event.event_id for event in known_mergers if event.ticker == item.ticker)
         elif item.ticker not in prices:
             record["exclusion"] = "no_price_column"
         elif item.sector.casefold() in unknown:
@@ -170,10 +178,10 @@ def select_pairs(data: MarketData, window: Window, cfg: Config, progress=None):
         if len(pairs) >= selection["max_pairs"]:
             tested.at[i, "exclusion"] = "portfolio_full"
             continue
-        if sector_count[row["sector"]] >= selection["max_per_sector"]:
+        if selection["max_per_sector"] > 0 and sector_count[row["sector"]] >= selection["max_per_sector"]:
             tested.at[i, "exclusion"] = "sector_cap"
             continue
-        if max(stock_count[row["x"]], stock_count[row["y"]]) >= selection["max_per_stock"]:
+        if selection["max_per_stock"] > 0 and max(stock_count[row["x"]], stock_count[row["y"]]) >= selection["max_per_stock"]:
             tested.at[i, "exclusion"] = "stock_cap"
             continue
         px, py = float(prices[row["x"]].iloc[-1]), float(prices[row["y"]].iloc[-1])
